@@ -9,10 +9,20 @@ import crypto from "crypto";
 
 export const registerBrandAdmin = async (request, response) => {
   try {
+    const { name, email, password, brandName } = request.body;
+
+    const existingUser = await userModel.findOne({ email: email });
+
+    if (existingUser) {
+      return response.status(400).json({
+        message: "user already exists",
+        error: true,
+        success: false,
+      });
+    }
+
     const session = await mongoose.startSession();
     await session.withTransaction(async () => {
-      const { name, email, password, brandName } = request.body;
-
       const existingUser = await userModel
         .findOne({ email: email })
         .session(session);
@@ -235,6 +245,192 @@ export const loginStaff = async (request, response) => {
   }
 };
 
+export const getManagersByBrand = async (request, response) => {
+  try {
+    const adminId = request.userId;
+
+    // 1. Verify the user is a Brand Admin
+    const adminUser = await userModel.findById(adminId);
+    if (!adminUser || adminUser.role !== "BRAND_ADMIN") {
+      return response.status(403).json({
+        message: "Only Brand Admin can perform this action.",
+        error: true,
+        success: false,
+      });
+    }
+
+    // 2. Find all managers for the admin's brand
+    const managers = await userModel
+      .find({
+        brandId: adminUser.brandId,
+        role: "MANAGER",
+      })
+      .select("-password -refresh_token");
+
+    return response.status(200).json({
+      message: "Managers fetched successfully",
+      error: false,
+      success: true,
+      data: managers,
+    });
+  } catch (err) {
+    request.log.error(err, "Error in getManagersByBrand");
+    return response.status(500).json({
+      message: "Internal Server Error",
+      error: true,
+      success: false,
+    });
+  }
+};
+
+export const getStaffByRestaurant = async (request, response) => {
+  try {
+    const managerId = request.userId;
+
+    // 1. Verify the user is a Manager
+    const manager = await userModel.findById(managerId);
+    if (!manager || manager.role !== "MANAGER") {
+      return response.status(403).json({
+        message: "Only a Manager can perform this action.",
+        error: true,
+        success: false,
+      });
+    }
+
+    // 2. Find all staff for the manager's restaurant
+    const staff = await userModel
+      .find({
+        restaurantId: manager.restaurantId,
+        role: { $in: ["CHEF", "WAITER"] },
+      })
+      .select("-password -refresh_token -email");
+
+    return response.status(200).json({
+      message: "Staff fetched successfully",
+      error: false,
+      success: true,
+      data: staff,
+    });
+  } catch (err) {
+    request.log.error(err, "Error in getStaffByRestaurant");
+    return response.status(500).json({
+      message: "Internal Server Error",
+      error: true,
+      success: false,
+    });
+  }
+};
+
+export const createStaff = async (request, response) => {
+  try {
+    const { name, role } = request.body;
+    const managerId = request.userId;
+
+    // 1. Verify the user is a Manager
+    const manager = await userModel.findById(managerId);
+    if (!manager || manager.role !== "MANAGER") {
+      return response.status(403).json({
+        message: "Only a Manager can create staff.",
+        error: true,
+        success: false,
+      });
+    }
+
+    // A manager must be assigned to a restaurant to create staff.
+    if (!manager.restaurantId) {
+      return response.status(400).json({
+        message: "Manager is not assigned to a restaurant.",
+        error: true,
+        success: false,
+      });
+    }
+
+    // 2. Validate role
+    if (!["CHEF", "WAITER"].includes(role)) {
+      return response.status(400).json({
+        message: "Invalid staff role provided.",
+        error: true,
+        success: false,
+      });
+    }
+
+    // 3. Generate a unique 4-digit PIN for the restaurant
+    let staff;
+    const MAX_RETRIES = 10; // Prevent infinite loops
+    for (let i = 0; i < MAX_RETRIES; i++) {
+      try {
+        const staffPin = crypto.randomInt(1000, 9999).toString();
+        staff = await userModel.create({
+          name,
+          role,
+          staffPin,
+          brandId: manager.brandId,
+          restaurantId: manager.restaurantId,
+          isActive: true,
+        });
+        break; // Success, exit loop
+      } catch (error) {
+        if (error.code === 11000 && i < MAX_RETRIES - 1) {
+          // Duplicate key error, retry with a new PIN
+          continue;
+        }
+        throw error; // Re-throw other errors or if retries are exhausted
+      }
+    }
+
+    return response.status(201).json({
+      message: `${role} created successfully`,
+      error: false,
+      success: true,
+      data: staff,
+    });
+  } catch (err) {
+    request.log.error(err, "Error in createStaff");
+    return response.status(500).json({
+      message: "Internal Server Error",
+      error: true,
+      success: false,
+    });
+  }
+};
+
+export const getAllStaffForBrand = async (request, response) => {
+  try {
+    const adminId = request.userId;
+
+    // 1. Verify the user is a Brand Admin
+    const adminUser = await userModel.findById(adminId);
+    if (!adminUser || adminUser.role !== "BRAND_ADMIN") {
+      return response.status(403).json({
+        message: "Only Brand Admin can perform this action.",
+        error: true,
+        success: false,
+      });
+    }
+
+    // 2. Find all staff for the admin's brand
+    const allStaff = await userModel
+      .find({
+        brandId: adminUser.brandId,
+        role: { $in: ["CHEF", "WAITER"] },
+      })
+      .populate("restaurantId", "name") // Populate restaurant name
+      .select("-password -refresh_token -email");
+
+    return response.status(200).json({
+      message: "All staff for the brand fetched successfully",
+      error: false,
+      success: true,
+      data: allStaff,
+    });
+  } catch (err) {
+    request.log.error(err, "Error in getAllStaffForBrand");
+    return response
+      .status(500)
+      .json({ message: "Internal Server Error", error: true, success: false });
+  }
+};
+
 // export const loginBrandAdmin = async (request, response) => {
 //   try {
 //     const { email, password } = request.body;
@@ -351,119 +547,259 @@ export const logoutController = async (request, response) => {
   }
 };
 
-export const getManagersByBrand = async (request, response) => {
+export const forgotPassword = async (request, response) => {
   try {
-    const adminId = request.userId;
+    const { email } = request.body;
+    const user = await userModel.findOne({ email });
 
-    // 1. Verify the user is a Brand Admin
-    const adminUser = await userModel.findById(adminId);
-    if (!adminUser || adminUser.role !== "BRAND_ADMIN") {
-      return response.status(403).json({
-        message: "Only Brand Admin can perform this action.",
-        error: true,
-        success: false,
+    if (!user) {
+      // Do not reveal if user exists or not for security reasons
+      return response.status(200).json({
+        message:
+          "If a user with this email exists, a password reset OTP has been sent.",
       });
     }
 
-    // 2. Find all managers for the admin's brand
-    const managers = await userModel
-      .find({
-        brandId: adminUser.brandId,
-        role: "MANAGER",
-      })
-      .select("-password -refresh_token");
+    // Generate a 6-digit OTP
+    const otp = crypto.randomInt(100000, 999999).toString();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // OTP is valid for 10 minutes
+
+    // Hash the OTP before saving
+    const salt = await bcryptjs.genSalt(10);
+    user.forgot_password_otp = await bcryptjs.hash(otp, salt);
+    user.forgot_password_expiry = otpExpiry;
+    await user.save();
+
+    // Send the actual OTP to the user's email
+    const emailHtml = `<p>You are receiving this email because you (or someone else) have requested the reset of a password. Your password reset OTP is:</p>
+                       <h2>${otp}</h2>
+                       <p>This OTP is valid for 10 minutes.</p>
+                       <p>If you did not request this, please ignore this email.</p>`;
+
+    try {
+      await sendEmail({
+        email: user.email,
+        subject: "SuperMenu - Password Reset OTP",
+        html: emailHtml,
+      });
+    } catch (emailError) {
+      request.log.error(emailError, "Failed to send password reset email");
+      // Even if email fails, don't let the user know. Just log the error.
+    }
 
     return response.status(200).json({
-      message: "Managers fetched successfully",
-      error: false,
-      success: true,
-      data: managers,
+      message:
+        "If a user with this email exists, a password reset OTP has been sent.",
     });
   } catch (err) {
-    request.log.error(err, "Error in getManagersByBrand");
-    return response.status(500).json({
-      message: "Internal Server Error",
-      error: true,
-      success: false,
-    });
+    request.log.error(err, "Error in forgotPassword");
+    return response.status(500).json({ message: "Internal Server Error" });
   }
 };
 
-export const getStaffByRestaurant = async (request, response) => {
+export const verifyOtp = async (request, response) => {
   try {
+    const { email, otp } = request.body;
+    const user = await userModel
+      .findOne({ email })
+      .select("+forgot_password_otp +forgot_password_expiry");
+
+    if (
+      !user ||
+      !user.forgot_password_otp ||
+      new Date() > user.forgot_password_expiry
+    ) {
+      return response.status(400).json({ message: "Invalid or expired OTP." });
+    }
+
+    const isOtpValid = await bcryptjs.compare(otp, user.forgot_password_otp);
+
+    if (!isOtpValid) {
+      return response.status(400).json({ message: "Invalid or expired OTP." });
+    }
+
+    // OTP is valid, clear it so it can't be reused
+    user.forgot_password_otp = undefined;
+    user.forgot_password_expiry = undefined;
+    await user.save();
+
+    // The client can now proceed to the reset password step
+    return response.status(200).json({
+      message: "OTP verified successfully. You can now reset your password.",
+    });
+  } catch (err) {
+    request.log.error(err, "Error in verifyOtp");
+    return response.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+export const resetPassword = async (request, response) => {
+  try {
+    const { email, newPassword } = request.body;
+
+    // We find the user but don't check for OTP again.
+    // The assumption is that the client only calls this after a successful /verify-otp call.
+    // A more secure flow might involve a temporary token returned from /verify-otp.
+    const user = await userModel.findOne({ email });
+
+    if (!user) {
+      return response.status(400).json({ message: "Invalid request." });
+    }
+
+    // Hash and set the new password
+    const salt = await bcryptjs.genSalt(10);
+    const hashPassword = await bcryptjs.hash(newPassword, salt);
+    user.password = hashPassword;
+    await user.save();
+
+    return response.status(200).json({
+      message: "Password has been reset successfully. Please log in.",
+    });
+  } catch (err) {
+    request.log.error(err, "Error in resetPassword");
+    return response.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+export const updateStaff = async (request, response) => {
+  try {
+    const { staffId } = request.params;
+    const { name } = request.body;
+    const managerId = request.userId;
+
+    const manager = await userModel.findById(managerId);
+    if (!manager || manager.role !== "MANAGER" || !manager.restaurantId) {
+      return response
+        .status(403)
+        .json({ message: "Only an assigned Manager can update staff." });
+    }
+
+    const staff = await userModel.findById(staffId);
+    if (
+      !staff ||
+      !["CHEF", "WAITER"].includes(staff.role) ||
+      staff.restaurantId.toString() !== manager.restaurantId.toString()
+    ) {
+      return response
+        .status(404)
+        .json({ message: "Staff member not found in your restaurant." });
+    }
+
+    if (name) {
+      staff.name = name;
+    }
+
+    await staff.save();
+
+    return response.status(200).json({
+      message: "Staff member updated successfully.",
+      data: staff,
+    });
+  } catch (err) {
+    request.log.error(err, "Error in updateStaff");
+    return response.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+export const toggleStaffStatus = async (request, response) => {
+  try {
+    const { staffId } = request.params;
+    const { isActive } = request.body; // Expects a boolean: true or false
+    const managerId = request.userId;
+
+    if (typeof isActive !== "boolean") {
+      return response
+        .status(400)
+        .json({ message: "isActive must be a boolean value." });
+    }
+
+    const manager = await userModel.findById(managerId);
+    if (!manager || manager.role !== "MANAGER" || !manager.restaurantId) {
+      return response
+        .status(403)
+        .json({ message: "Only an assigned Manager can change staff status." });
+    }
+
+    const staff = await userModel.findById(staffId);
+    if (
+      !staff ||
+      !["CHEF", "WAITER"].includes(staff.role) ||
+      staff.restaurantId.toString() !== manager.restaurantId.toString()
+    ) {
+      return response
+        .status(404)
+        .json({ message: "Staff member not found in your restaurant." });
+    }
+
+    staff.isActive = isActive;
+    await staff.save();
+
+    const status = isActive ? "activated" : "deactivated";
+    return response
+      .status(200)
+      .json({ message: `Staff member has been ${status}.` });
+  } catch (err) {
+    request.log.error(err, "Error in toggleStaffStatus");
+    return response.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+export const assignChefToStation = async (request, response) => {
+  try {
+    const { staffId } = request.params;
+    const { kitchenStationId } = request.body;
     const managerId = request.userId;
 
     // 1. Verify the user is a Manager
     const manager = await userModel.findById(managerId);
-    if (!manager || manager.role !== "MANAGER") {
-      return response.status(403).json({
-        message: "Only a Manager can perform this action.",
-        error: true,
-        success: false,
-      });
+    if (!manager || manager.role !== "MANAGER" || !manager.restaurantId) {
+      return response
+        .status(403)
+        .json({ message: "Only an assigned Manager can perform this action." });
     }
 
-    // 2. Find all staff for the manager's restaurant
-    const staff = await userModel
-      .find({
-        restaurantId: manager.restaurantId,
-        role: { $in: ["CHEF", "WAITER"] },
-      })
-      .select("-password -refresh_token -email");
-
-    return response.status(200).json({
-      message: "Staff fetched successfully",
-      error: false,
-      success: true,
-      data: staff,
-    });
-  } catch (err) {
-    request.log.error(err, "Error in getStaffByRestaurant");
-    return response.status(500).json({
-      message: "Internal Server Error",
-      error: true,
-      success: false,
-    });
-  }
-};
-
-// @desc    Get all staff for a brand
-// @route   GET /api/auth/all-staff
-// @access  Private (Brand Admin)
-export const getAllStaffForBrand = async (request, response) => {
-  try {
-    const adminId = request.userId;
-
-    // 1. Verify the user is a Brand Admin
-    const adminUser = await userModel.findById(adminId);
-    if (!adminUser || adminUser.role !== "BRAND_ADMIN") {
-      return response.status(403).json({
-        message: "Only Brand Admin can perform this action.",
-        error: true,
-        success: false,
-      });
+    // 2. Find the staff member and validate they are a CHEF in the same restaurant
+    const chef = await userModel.findById(staffId);
+    if (
+      !chef ||
+      chef.role !== "CHEF" ||
+      chef.restaurantId.toString() !== manager.restaurantId.toString()
+    ) {
+      return response
+        .status(404)
+        .json({ message: "Chef not found in your restaurant." });
     }
 
-    // 2. Find all staff for the admin's brand
-    const allStaff = await userModel
-      .find({
-        brandId: adminUser.brandId,
-        role: { $in: ["CHEF", "WAITER"] },
-      })
-      .populate("restaurantId", "name") // Populate restaurant name
-      .select("-password -refresh_token -email");
+    // 3. If un-assigning, set kitchenStationId to null
+    if (!kitchenStationId) {
+      chef.kitchenStationId = null;
+      await chef.save();
+      return response
+        .status(200)
+        .json({ message: "Chef un-assigned from station successfully." });
+    }
 
-    return response.status(200).json({
-      message: "All staff for the brand fetched successfully",
-      error: false,
-      success: true,
-      data: allStaff,
-    });
-  } catch (err) {
-    request.log.error(err, "Error in getAllStaffForBrand");
+    // 4. Validate the kitchen station belongs to the same restaurant
+    const station = await kitchenStationModel.findById(kitchenStationId);
+    if (
+      !station ||
+      station.restaurantId.toString() !== manager.restaurantId.toString()
+    ) {
+      return response
+        .status(404)
+        .json({ message: "Kitchen station not found in your restaurant." });
+    }
+
+    // 5. Assign the station to the chef
+    chef.kitchenStationId = kitchenStationId;
+    await chef.save();
+
     return response
-      .status(500)
-      .json({ message: "Internal Server Error", error: true, success: false });
+      .status(200)
+      .json({ message: "Chef assigned to station successfully." });
+  } catch (err) {
+    request.log.error(err, "Error in assignChefToStation");
+    return response.status(500).json({ message: "Internal Server Error" });
   }
 };
 
@@ -531,79 +867,6 @@ export const createManager = async (request, response) => {
   }
 };
 
-export const createStaff = async (request, response) => {
-  try {
-    const { name, role, restaurantId } = request.body;
-    const managerId = request.userId;
-
-    // 1. Verify the user is a Manager
-    const manager = await userModel.findById(managerId);
-    if (!manager || manager.role !== "MANAGER") {
-      return response.status(403).json({
-        message: "Only a Manager can create staff.",
-        error: true,
-        success: false,
-      });
-    }
-
-    // A manager must be assigned to a restaurant to create staff.
-    if (!manager.restaurantId) {
-      return response.status(400).json({
-        message: "Manager is not assigned to a restaurant.",
-        error: true,
-        success: false,
-      });
-    }
-
-    // 2. Validate role
-    if (!["CHEF", "WAITER"].includes(role)) {
-      return response.status(400).json({
-        message: "Invalid staff role provided.",
-        error: true,
-        success: false,
-      });
-    }
-
-    // 3. Generate a unique 4-digit PIN for the restaurant
-    let staff;
-    const MAX_RETRIES = 10; // Prevent infinite loops
-    for (let i = 0; i < MAX_RETRIES; i++) {
-      try {
-        const staffPin = crypto.randomInt(1000, 9999).toString();
-        staff = await userModel.create({
-          name,
-          role,
-          staffPin,
-          brandId: manager.brandId,
-          restaurantId: manager.restaurantId,
-          isActive: true,
-        });
-        break; // Success, exit loop
-      } catch (error) {
-        if (error.code === 11000 && i < MAX_RETRIES - 1) {
-          // Duplicate key error, retry with a new PIN
-          continue;
-        }
-        throw error; // Re-throw other errors or if retries are exhausted
-      }
-    }
-
-    return response.status(201).json({
-      message: `${role} created successfully`,
-      error: false,
-      success: true,
-      data: staff,
-    });
-  } catch (err) {
-    request.log.error(err, "Error in createStaff");
-    return response.status(500).json({
-      message: "Internal Server Error",
-      error: true,
-      success: false,
-    });
-  }
-};
-
 export const getProfile = async (request, response) => {
   try {
     const user = await userModel
@@ -661,279 +924,5 @@ export const updateProfile = async (request, response) => {
       error: true,
       success: false,
     });
-  }
-};
-
-// @desc    Assign a chef to a kitchen station
-// @route   PATCH /api/auth/staff/:staffId/assign-station
-// @access  Private (Manager)
-export const assignChefToStation = async (request, response) => {
-  try {
-    const { staffId } = request.params;
-    const { kitchenStationId } = request.body;
-    const managerId = request.userId;
-
-    // 1. Verify the user is a Manager
-    const manager = await userModel.findById(managerId);
-    if (!manager || manager.role !== "MANAGER" || !manager.restaurantId) {
-      return response
-        .status(403)
-        .json({ message: "Only an assigned Manager can perform this action." });
-    }
-
-    // 2. Find the staff member and validate they are a CHEF in the same restaurant
-    const chef = await userModel.findById(staffId);
-    if (
-      !chef ||
-      chef.role !== "CHEF" ||
-      chef.restaurantId.toString() !== manager.restaurantId.toString()
-    ) {
-      return response
-        .status(404)
-        .json({ message: "Chef not found in your restaurant." });
-    }
-
-    // 3. If un-assigning, set kitchenStationId to null
-    if (!kitchenStationId) {
-      chef.kitchenStationId = null;
-      await chef.save();
-      return response
-        .status(200)
-        .json({ message: "Chef un-assigned from station successfully." });
-    }
-
-    // 4. Validate the kitchen station belongs to the same restaurant
-    const station = await kitchenStationModel.findById(kitchenStationId);
-    if (
-      !station ||
-      station.restaurantId.toString() !== manager.restaurantId.toString()
-    ) {
-      return response
-        .status(404)
-        .json({ message: "Kitchen station not found in your restaurant." });
-    }
-
-    // 5. Assign the station to the chef
-    chef.kitchenStationId = kitchenStationId;
-    await chef.save();
-
-    return response
-      .status(200)
-      .json({ message: "Chef assigned to station successfully." });
-  } catch (err) {
-    request.log.error(err, "Error in assignChefToStation");
-    return response.status(500).json({ message: "Internal Server Error" });
-  }
-};
-
-// @desc    Generate OTP for password reset
-// @route   POST /api/auth/forgot-password
-// @access  Public
-export const forgotPassword = async (request, response) => {
-  try {
-    const { email } = request.body;
-    const user = await userModel.findOne({ email });
-
-    if (!user) {
-      // Do not reveal if user exists or not for security reasons
-      return response.status(200).json({
-        message:
-          "If a user with this email exists, a password reset OTP has been sent.",
-      });
-    }
-
-    // Generate a 6-digit OTP
-    const otp = crypto.randomInt(100000, 999999).toString();
-    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // OTP is valid for 10 minutes
-
-    // Hash the OTP before saving
-    const salt = await bcryptjs.genSalt(10);
-    user.forgot_password_otp = await bcryptjs.hash(otp, salt);
-    user.forgot_password_expiry = otpExpiry;
-    await user.save();
-
-    // Send the actual OTP to the user's email
-    const emailHtml = `<p>You are receiving this email because you (or someone else) have requested the reset of a password. Your password reset OTP is:</p>
-                       <h2>${otp}</h2>
-                       <p>This OTP is valid for 10 minutes.</p>
-                       <p>If you did not request this, please ignore this email.</p>`;
-
-    try {
-      await sendEmail({
-        email: user.email,
-        subject: "SuperMenu - Password Reset OTP",
-        html: emailHtml,
-      });
-    } catch (emailError) {
-      request.log.error(emailError, "Failed to send password reset email");
-      // Even if email fails, don't let the user know. Just log the error.
-    }
-
-    return response.status(200).json({
-      message:
-        "If a user with this email exists, a password reset OTP has been sent.",
-    });
-  } catch (err) {
-    request.log.error(err, "Error in forgotPassword");
-    return response.status(500).json({ message: "Internal Server Error" });
-  }
-};
-
-// @desc    Verify password reset OTP
-// @route   POST /api/auth/verify-otp
-// @access  Public
-export const verifyOtp = async (request, response) => {
-  try {
-    const { email, otp } = request.body;
-    const user = await userModel
-      .findOne({ email })
-      .select("+forgot_password_otp +forgot_password_expiry");
-
-    if (
-      !user ||
-      !user.forgot_password_otp ||
-      new Date() > user.forgot_password_expiry
-    ) {
-      return response.status(400).json({ message: "Invalid or expired OTP." });
-    }
-
-    const isOtpValid = await bcryptjs.compare(otp, user.forgot_password_otp);
-
-    if (!isOtpValid) {
-      return response.status(400).json({ message: "Invalid or expired OTP." });
-    }
-
-    // OTP is valid, clear it so it can't be reused
-    user.forgot_password_otp = undefined;
-    user.forgot_password_expiry = undefined;
-    await user.save();
-
-    // The client can now proceed to the reset password step
-    return response.status(200).json({
-      message: "OTP verified successfully. You can now reset your password.",
-    });
-  } catch (err) {
-    request.log.error(err, "Error in verifyOtp");
-    return response.status(500).json({ message: "Internal Server Error" });
-  }
-};
-
-// @desc    Reset password after OTP verification
-// @route   POST /api/auth/reset-password
-// @access  Public
-export const resetPassword = async (request, response) => {
-  try {
-    const { email, newPassword } = request.body;
-
-    // We find the user but don't check for OTP again.
-    // The assumption is that the client only calls this after a successful /verify-otp call.
-    // A more secure flow might involve a temporary token returned from /verify-otp.
-    const user = await userModel.findOne({ email });
-
-    if (!user) {
-      return response.status(400).json({ message: "Invalid request." });
-    }
-
-    // Hash and set the new password
-    const salt = await bcryptjs.genSalt(10);
-    const hashPassword = await bcryptjs.hash(newPassword, salt);
-    user.password = hashPassword;
-    await user.save();
-
-    return response.status(200).json({
-      message: "Password has been reset successfully. Please log in.",
-    });
-  } catch (err) {
-    request.log.error(err, "Error in resetPassword");
-    return response.status(500).json({ message: "Internal Server Error" });
-  }
-};
-
-// @desc    Update a staff member's details
-// @route   PUT /api/auth/staff/:staffId
-// @access  Private (Manager)
-export const updateStaff = async (request, response) => {
-  try {
-    const { staffId } = request.params;
-    const { name } = request.body;
-    const managerId = request.userId;
-
-    const manager = await userModel.findById(managerId);
-    if (!manager || manager.role !== "MANAGER" || !manager.restaurantId) {
-      return response
-        .status(403)
-        .json({ message: "Only an assigned Manager can update staff." });
-    }
-
-    const staff = await userModel.findById(staffId);
-    if (
-      !staff ||
-      !["CHEF", "WAITER"].includes(staff.role) ||
-      staff.restaurantId.toString() !== manager.restaurantId.toString()
-    ) {
-      return response
-        .status(404)
-        .json({ message: "Staff member not found in your restaurant." });
-    }
-
-    if (name) {
-      staff.name = name;
-    }
-
-    await staff.save();
-
-    return response.status(200).json({
-      message: "Staff member updated successfully.",
-      data: staff,
-    });
-  } catch (err) {
-    request.log.error(err, "Error in updateStaff");
-    return response.status(500).json({ message: "Internal Server Error" });
-  }
-};
-
-// @desc    Activate or deactivate a staff member
-// @route   PATCH /api/auth/staff/:staffId/status
-// @access  Private (Manager)
-export const toggleStaffStatus = async (request, response) => {
-  try {
-    const { staffId } = request.params;
-    const { isActive } = request.body; // Expects a boolean: true or false
-    const managerId = request.userId;
-
-    if (typeof isActive !== "boolean") {
-      return response
-        .status(400)
-        .json({ message: "isActive must be a boolean value." });
-    }
-
-    const manager = await userModel.findById(managerId);
-    if (!manager || manager.role !== "MANAGER" || !manager.restaurantId) {
-      return response
-        .status(403)
-        .json({ message: "Only an assigned Manager can change staff status." });
-    }
-
-    const staff = await userModel.findById(staffId);
-    if (
-      !staff ||
-      !["CHEF", "WAITER"].includes(staff.role) ||
-      staff.restaurantId.toString() !== manager.restaurantId.toString()
-    ) {
-      return response
-        .status(404)
-        .json({ message: "Staff member not found in your restaurant." });
-    }
-
-    staff.isActive = isActive;
-    await staff.save();
-
-    const status = isActive ? "activated" : "deactivated";
-    return response
-      .status(200)
-      .json({ message: `Staff member has been ${status}.` });
-  } catch (err) {
-    request.log.error(err, "Error in toggleStaffStatus");
-    return response.status(500).json({ message: "Internal Server Error" });
   }
 };

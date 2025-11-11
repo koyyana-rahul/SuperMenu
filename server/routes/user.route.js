@@ -1,6 +1,5 @@
 import { Router } from "express";
 import {
-  createManager,
   createStaff,
   getProfile,
   getManagersByBrand,
@@ -17,6 +16,7 @@ import {
   updateStaff,
   toggleStaffStatus,
   assignChefToStation,
+  createManager,
 } from "../controllers/user.controller.js";
 import auth from "../middleware/auth.js";
 import upload from "../middleware/multer.js";

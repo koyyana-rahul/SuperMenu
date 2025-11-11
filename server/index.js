@@ -15,10 +15,10 @@ import branchMenuRouter from "./routes/branchMenu.route.js";
 import menuCategoryRouter from "./routes/menuCategory.route.js";
 import menuSubcategoryRouter from "./routes/menuSubCategory.route.js";
 import publicRouter from "./routes/public.route.js";
-import tableRouter from './routes/table.route.js';
-import orderRouter from './routes/order.route.js';
-import reportingRouter from './routes/reporting.route.js';
-import paymentRouter from './routes/payment.route.js';
+import tableRouter from "./routes/table.route.js";
+import orderRouter from "./routes/order.route.js";
+import reportingRouter from "./routes/reporting.route.js";
+import paymentRouter from "./routes/payment.route.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -86,10 +86,10 @@ app.use("/api/branch-menu", branchMenuRouter);
 app.use("/api/menu-categories", menuCategoryRouter);
 app.use("/api/menu-subcategories", menuSubcategoryRouter);
 app.use("/api/public", publicRouter);
-app.use('/api/tables', tableRouter);
-app.use('/api/orders', orderRouter);
-app.use('/api/reports', reportingRouter);
-app.use('/api/payments', paymentRouter);
+app.use("/api/tables", tableRouter);
+app.use("/api/orders", orderRouter);
+app.use("/api/reports", reportingRouter);
+app.use("/api/payments", paymentRouter);
 
 // Global error handler
 app.use((err, req, res, next) => {
