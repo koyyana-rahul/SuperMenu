@@ -18,10 +18,36 @@ export const createRestaurant = async (request, response) => {
       });
     }
 
+    // Sanitize phone number to prevent duplicates with leading zeros or formatting
+    const sanitizedPhone = phone.replace(/\D/g, "").replace(/^0+/, "");
+
+    // Check for existing restaurant with the same name (case-insensitive) or phone for the same brand
+    const existingRestaurant = await restaurantModel.findOne({
+      brandId: admin.brandId,
+      $or: [
+        { name: { $regex: `^${name}$`, $options: "i" } },
+        { phone: sanitizedPhone },
+      ],
+    });
+
+    if (existingRestaurant) {
+      const field =
+        existingRestaurant.name.toLowerCase() === name.toLowerCase()
+          ? "name"
+          : "phone number";
+      return response
+        .status(409)
+        .json({
+          message: `A restaurant with this ${field} already exists for your brand.`,
+          error: true,
+          success: false,
+        });
+    }
+
     const restaurant = await restaurantModel.create({
       name,
       address,
-      phone,
+      phone: sanitizedPhone,
       brandId: admin.brandId,
     });
 
@@ -32,6 +58,22 @@ export const createRestaurant = async (request, response) => {
       data: restaurant,
     });
   } catch (err) {
+    // Handle duplicate key error for the compound indexes
+    if (err.code === 11000) {
+      let message =
+        "A restaurant with this name or phone number already exists for your brand.";
+      if (err.keyPattern?.name) {
+        message = "A restaurant with this name already exists for your brand.";
+      } else if (err.keyPattern?.phone) {
+        message =
+          "A restaurant with this phone number already exists for your brand.";
+      }
+      return response.status(400).json({
+        message: message,
+        error: true,
+        success: false,
+      });
+    }
     request.log.error(err, "Error in createRestaurant");
     return response.status(500).json({
       message: "Internal Server Error",
@@ -150,12 +192,24 @@ export const updateRestaurant = async (request, response) => {
       data: updatedRestaurant,
     });
   } catch (err) {
+    // Handle duplicate key error for the compound indexes
+    if (err.code === 11000) {
+      let message =
+        "A restaurant with this name or phone number already exists for your brand.";
+      if (err.keyPattern?.name) {
+        message = "A restaurant with this name already exists for your brand.";
+      } else if (err.keyPattern?.phone) {
+        message =
+          "A restaurant with this phone number already exists for your brand.";
+      }
+      return response
+        .status(400)
+        .json({ message, error: true, success: false });
+    }
     request.log.error(err, "Error in updateRestaurant");
-    return response.status(500).json({
-      message: "Internal Server Error",
-      error: true,
-      success: false,
-    });
+    return response
+      .status(500)
+      .json({ message: "Internal Server Error", error: true, success: false });
   }
 };
 

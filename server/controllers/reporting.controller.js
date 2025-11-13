@@ -241,8 +241,8 @@ export const getSalesReportForBrandAdmin = async (request, response) => {
     ]);
 
     const summary = {
-      salesByRestaurant: report[0].salesByRestaurant,
-      grandTotal: report[0].grandTotal[0] || { totalSales: 0, totalOrders: 0 },
+      salesByRestaurant: report[0]?.salesByRestaurant || [],
+      grandTotal: report[0]?.grandTotal[0] || { totalSales: 0, totalOrders: 0 },
     };
 
     return response.status(200).json({ data: summary });
@@ -278,7 +278,7 @@ export const getBrandDashboardStats = async (request, response) => {
     const end = new Date(endDate);
 
     // 2. Main aggregation pipeline
-    const [dashboardData] = await orderModel.aggregate([
+    const report = await orderModel.aggregate([
       // Stage 1: Filter all orders for the brand within the date range
       {
         $lookup: {
@@ -351,17 +351,19 @@ export const getBrandDashboardStats = async (request, response) => {
       },
     ]);
 
+    const dashboardData = report[0];
+
     // 3. Format the response
     const responseData = {
-      salesSummary: dashboardData.salesSummary[0] || {
+      salesSummary: dashboardData?.salesSummary[0] || {
         totalSales: 0,
         totalOrders: 0,
       },
-      operationalInsights: dashboardData.operationalInsights[0] || {
+      operationalInsights: dashboardData?.operationalInsights[0] || {
         totalSuspiciousOrders: 0,
         totalCancelledOrders: 0,
       },
-      topSellingItems: dashboardData.topSellingItems,
+      topSellingItems: dashboardData?.topSellingItems || [],
     };
 
     return response.status(200).json({ data: responseData });
@@ -463,15 +465,15 @@ export const getManagerDashboardStats = async (request, response) => {
 
     // 3. Format the response
     const responseData = {
-      salesSummary: dashboardData.salesSummary[0] || {
+      salesSummary: dashboardData?.salesSummary[0] || {
         totalSales: 0,
         totalOrders: 0,
       },
-      operationalInsights: dashboardData.operationalInsights[0] || {
+      operationalInsights: dashboardData?.operationalInsights[0] || {
         totalSuspiciousOrders: 0,
         totalCancelledOrders: 0,
       },
-      topSellingItems: dashboardData.topSellingItems,
+      topSellingItems: dashboardData?.topSellingItems || [],
     };
 
     return response.status(200).json({ data: responseData });

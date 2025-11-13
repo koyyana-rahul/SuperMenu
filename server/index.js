@@ -37,6 +37,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// It's a good practice to place CORS before other middleware
+app.use(
+  cors({
+    credentials: true,
+    origin: config.frontendUrl,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
 // Socket.IO connection handler
 io.on("connection", (socket) => {
   console.log("A user connected with socket ID:", socket.id);
@@ -68,13 +78,6 @@ app.use(
       },
     },
     crossOriginEmbedderPolicy: false,
-  })
-);
-
-app.use(
-  cors({
-    credentials: true,
-    origin: config.frontendUrl,
   })
 );
 

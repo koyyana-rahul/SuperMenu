@@ -45,6 +45,13 @@ export const placeOrder = async (request, response) => {
       });
     }
 
+    // Fetch restaurant settings for firewall checks
+    const restaurant = await restaurantModel.findById(table.restaurantId).select('settings').lean();
+    if (!restaurant || !restaurant.settings) {
+      // Handle case where restaurant or its settings are not found
+      return response.status(500).json({ message: "Could not retrieve restaurant settings." });
+    }
+
     // 2. Find or create an open order for this table
     let order = await orderModel.findOne({
       tableId: table._id,

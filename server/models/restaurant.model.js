@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import mongoosePaginate from "mongoose-paginate-v2";
 
 const restaurantSchema = new mongoose.Schema(
   {
@@ -52,6 +53,18 @@ const restaurantSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Ensure that for a given brand, restaurant names are unique.
+restaurantSchema.index(
+  { brandId: 1, name: 1 },
+  { unique: true, collation: { locale: "en", strength: 2 } }
+);
+// Ensure that for a given brand, restaurant phone numbers are unique, but only if a phone number is provided.
+restaurantSchema.index(
+  { brandId: 1, phone: 1 },
+  { unique: true, partialFilterExpression: { phone: { $ne: "" } } }
+);
+restaurantSchema.plugin(mongoosePaginate);
 
 const restaurantModel = mongoose.model("restaurant", restaurantSchema);
 export default restaurantModel;

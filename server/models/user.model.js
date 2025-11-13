@@ -1,4 +1,6 @@
 import mongoose from "mongoose";
+import mongoosePaginate from "mongoose-paginate-v2";
+
 const userSchema = new mongoose.Schema(
   {
     name: {
@@ -67,6 +69,8 @@ userSchema.index(
   { restaurantId: 1, staffPin: 1 },
   { unique: true, sparse: true }
 );
+
+userSchema.plugin(mongoosePaginate);
 
 const userModel = mongoose.model("user", userSchema);
 

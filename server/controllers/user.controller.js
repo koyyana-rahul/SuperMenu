@@ -62,7 +62,7 @@ export const registerBrandAdmin = async (request, response) => {
       await brand.save({ session });
 
       brandAdmin.brandId = brand._id;
-      await brandAdmin.save({ session }); // This was the missing line
+      await brandAdmin.save({ session });
 
       return response.status(201).json({
         data: {
@@ -110,9 +110,9 @@ export const loginUser = async (request, response) => {
       });
     }
 
-    if (user.isActive === false) {
-      return response.status(400).json({
-        message: "Contact to Admin",
+    if (!user.isActive) {
+      return response.status(403).json({
+        message: "Your account is inactive. Please contact your administrator.",
         error: true,
         success: false,
       });
@@ -127,7 +127,11 @@ export const loginUser = async (request, response) => {
       });
     }
 
-    const accesstoken = await generatedAccessToken(user._id, user.role);
+    const accesstoken = await generatedAccessToken(
+      user._id,
+      user.role,
+      user.brandId
+    );
     const refreshToken = await genertedRefreshToken(user._id, user.role);
 
     await userModel.findByIdAndUpdate(user._id, {
@@ -149,14 +153,14 @@ export const loginUser = async (request, response) => {
       error: false,
       success: true,
       data: {
-        accesstoken,
+        accessToken: accesstoken,
         refreshToken,
         user: {
           _id: user._id,
           name: user.name,
           email: user.email,
           role: user.role,
-          brandId: user.brandId,
+          brandId: user.brandId, // This was missing
           last_login_date: new Date(),
         },
       },
@@ -204,7 +208,11 @@ export const loginStaff = async (request, response) => {
       });
     }
 
-    const accesstoken = await generatedAccessToken(user._id, user.role);
+    const accesstoken = await generatedAccessToken(
+      user._id,
+      user.role,
+      user.brandId
+    );
     const refreshToken = await genertedRefreshToken(user._id, user.role);
 
     await userModel.findByIdAndUpdate(user._id, {
@@ -225,7 +233,7 @@ export const loginStaff = async (request, response) => {
       error: false,
       success: true,
       data: {
-        accesstoken,
+        accessToken: accesstoken,
         refreshToken,
         user: {
           _id: user._id,
@@ -805,7 +813,7 @@ export const assignChefToStation = async (request, response) => {
 
 export const createManager = async (request, response) => {
   try {
-    const { name, email, password, restaurantId } = request.body;
+    const { name, email, password, mobile, restaurantId } = request.body;
     const adminId = request.userId;
 
     // Find the Brand Admin
@@ -813,6 +821,15 @@ export const createManager = async (request, response) => {
     if (!adminUser || adminUser.role !== "BRAND_ADMIN") {
       return response.status(403).json({
         message: "Only Brand Admin can create managers",
+        error: true,
+        success: false,
+      });
+    }
+
+    // Validate that password is provided
+    if (!password) {
+      return response.status(400).json({
+        message: "A password must be provided for the manager.",
         error: true,
         success: false,
       });
@@ -837,6 +854,7 @@ export const createManager = async (request, response) => {
       });
     }
 
+    // Hash the password
     const salt = await bcryptjs.genSalt(10);
     const hashPassword = await bcryptjs.hash(password, salt);
 
@@ -845,6 +863,7 @@ export const createManager = async (request, response) => {
       name,
       email,
       password: hashPassword,
+      mobile,
       role: "MANAGER",
       brandId: adminUser.brandId,
       restaurantId: restaurantId,
@@ -864,6 +883,94 @@ export const createManager = async (request, response) => {
       error: true,
       success: false,
     });
+  }
+};
+
+export const updateManager = async (request, response) => {
+  try {
+    const { managerId } = request.params;
+    const { name, mobile, restaurantId } = request.body;
+    const adminId = request.userId;
+
+    // 1. Verify the user is a Brand Admin
+    const adminUser = await userModel.findById(adminId);
+    if (!adminUser || adminUser.role !== "BRAND_ADMIN") {
+      return response
+        .status(403)
+        .json({ message: "Only Brand Admin can update managers." });
+    }
+
+    // 2. Find the manager to update
+    const manager = await userModel.findById(managerId);
+    if (
+      !manager ||
+      manager.role !== "MANAGER" ||
+      manager.brandId.toString() !== adminUser.brandId.toString()
+    ) {
+      return response
+        .status(404)
+        .json({ message: "Manager not found in your brand." });
+    }
+
+    // 3. Update fields
+    if (name) manager.name = name;
+    if (mobile) manager.mobile = mobile;
+    if (restaurantId) manager.restaurantId = restaurantId;
+
+    await manager.save();
+
+    return response.status(200).json({
+      message: "Manager updated successfully.",
+      data: manager,
+    });
+  } catch (err) {
+    request.log.error(err, "Error in updateManager");
+    return response.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+export const toggleManagerStatus = async (request, response) => {
+  try {
+    const { managerId } = request.params;
+    const { isActive } = request.body;
+    const adminId = request.userId;
+
+    if (typeof isActive !== "boolean") {
+      return response
+        .status(400)
+        .json({ message: "isActive must be a boolean value." });
+    }
+
+    // 1. Verify the user is a Brand Admin
+    const adminUser = await userModel.findById(adminId);
+    if (!adminUser || adminUser.role !== "BRAND_ADMIN") {
+      return response
+        .status(403)
+        .json({ message: "Only Brand Admin can change manager status." });
+    }
+
+    // 2. Find the manager
+    const manager = await userModel.findById(managerId);
+    if (
+      !manager ||
+      manager.role !== "MANAGER" ||
+      manager.brandId.toString() !== adminUser.brandId.toString()
+    ) {
+      return response
+        .status(404)
+        .json({ message: "Manager not found in your brand." });
+    }
+
+    manager.isActive = isActive;
+    await manager.save();
+
+    const status = isActive ? "activated" : "deactivated";
+    return response
+      .status(200)
+      .json({ message: `Manager has been ${status}.`, success: true });
+  } catch (err) {
+    request.log.error(err, "Error in toggleManagerStatus");
+    return response.status(500).json({ message: "Internal Server Error" });
   }
 };
 
